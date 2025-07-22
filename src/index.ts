@@ -84,6 +84,54 @@ class JiraServer {
               required: ["issueKey"],
             },
           },
+          {
+            name: "jira_get_transitions",
+            description: "Get available status transitions for a Jira issue",
+            inputSchema: {
+              type: "object",
+              properties: {
+                issueKey: {
+                  type: "string",
+                  description: "The Jira issue key (e.g., PROJECT-123)",
+                },
+              },
+              required: ["issueKey"],
+            },
+          },
+          {
+            name: "jira_update_issue",
+            description: "Update a Jira issue (change status, assignee, etc.)",
+            inputSchema: {
+              type: "object",
+              properties: {
+                issueKey: {
+                  type: "string",
+                  description: "The Jira issue key (e.g., PROJECT-123)",
+                },
+                transition: {
+                  type: "string",
+                  description: "Status transition name or ID (use jira_get_transitions to see available options)",
+                },
+                assignee: {
+                  type: "string",
+                  description: "Assignee email or account ID (optional)",
+                },
+                summary: {
+                  type: "string",
+                  description: "Updated summary (optional)",
+                },
+                description: {
+                  type: "string",
+                  description: "Updated description (optional)",
+                },
+                priority: {
+                  type: "string",
+                  description: "Priority name (e.g., High, Medium, Low) (optional)",
+                },
+              },
+              required: ["issueKey"],
+            },
+          },
         ],
       };
     });
@@ -102,6 +150,12 @@ class JiraServer {
           case "jira_get_issue_comments":
             return await this.getIssueComments(args?.issueKey as string);
           
+          case "jira_get_transitions":
+            return await this.getTransitions(args?.issueKey as string);
+          
+          case "jira_update_issue":
+            return await this.updateIssue(args);
+          
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -118,24 +172,33 @@ class JiraServer {
     });
   }
 
-  private async makeJiraRequest(endpoint: string, params?: any) {
+  private async makeJiraRequest(endpoint: string, options?: { params?: any; data?: any; method?: 'GET' | 'POST' | 'PUT' }) {
     const auth = Buffer.from(`${this.config.email}:${this.config.apiToken}`).toString('base64');
     const apiBase = `${this.config.baseUrl}/rest/api/3`;
+    const method = options?.method || 'GET';
     
-    const response = await axios.get(`${apiBase}${endpoint}`, {
+    const config = {
+      method,
+      url: `${apiBase}${endpoint}`,
       headers: {
         Authorization: `Basic ${auth}`,
         Accept: "application/json",
+        ...(method !== 'GET' && { 'Content-Type': 'application/json' })
       },
-      params,
-    });
+      ...(options?.params && { params: options.params }),
+      ...(options?.data && { data: options.data })
+    };
+    
+    const response = await axios(config);
     return response.data;
   }
 
   private async getIssue(issueKey: string) {
     const data = await this.makeJiraRequest(`/issue/${issueKey}`, {
-      fields: "summary,status,assignee,priority,created,updated,description,issuetype,reporter,parent",
-      expand: "renderedFields",
+      params: {
+        fields: "summary,status,assignee,priority,created,updated,description,issuetype,reporter,parent",
+        expand: "renderedFields",
+      }
     });
 
     // Extract acceptance criteria from description or custom field
@@ -211,9 +274,11 @@ ${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) =
 
   private async searchIssues(jql: string, maxResults: number) {
     const data = await this.makeJiraRequest("/search", {
-      jql,
-      maxResults,
-      fields: "summary,status,assignee,priority,created,updated",
+      params: {
+        jql,
+        maxResults,
+        fields: "summary,status,assignee,priority,created,updated",
+      }
     });
 
     const issues = data.issues?.map((issue: any) => ({
@@ -253,6 +318,88 @@ ${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) =
           text: `Comments for ${issueKey}:\n\n${comments
             .map((comment: any) => `**${comment.author}** (${new Date(comment.created).toLocaleDateString()}):\n${comment.body}`)
             .join('\n\n---\n\n')}`,
+        },
+      ],
+    };
+  }
+
+  private async getTransitions(issueKey: string) {
+    const data = await this.makeJiraRequest(`/issue/${issueKey}/transitions`);
+
+    const transitions = data.transitions?.map((transition: any) => ({
+      id: transition.id,
+      name: transition.name,
+      to: transition.to?.name,
+    })) || [];
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Available transitions for ${issueKey}:\n\n${transitions
+            .map((transition: any) => `**${transition.name}** (ID: ${transition.id}) -> ${transition.to}`)
+            .join('\n')}`,
+        },
+      ],
+    };
+  }
+
+  private async updateIssue(args: any) {
+    const { issueKey, transition, assignee, summary, description, priority } = args;
+    let updateResult = "";
+
+    // Handle status transition
+    if (transition) {
+      try {
+        // Get available transitions to find the correct ID
+        const transitionsData = await this.makeJiraRequest(`/issue/${issueKey}/transitions`);
+        const availableTransition = transitionsData.transitions?.find(
+          (t: any) => t.name.toLowerCase() === transition.toLowerCase() || t.id === transition
+        );
+
+        if (!availableTransition) {
+          throw new Error(`Transition "${transition}" not found. Use jira_get_transitions to see available options.`);
+        }
+
+        await this.makeJiraRequest(`/issue/${issueKey}/transitions`, {
+          method: 'POST',
+          data: {
+            transition: { id: availableTransition.id }
+          }
+        });
+        updateResult += `✓ Status changed to ${availableTransition.to?.name || transition}\n`;
+      } catch (error) {
+        updateResult += `✗ Failed to change status: ${error instanceof Error ? error.message : String(error)}\n`;
+      }
+    }
+
+    // Handle other field updates
+    const fields: any = {};
+    if (assignee) {
+      // Try to find user by email or use as account ID
+      fields.assignee = { emailAddress: assignee };
+    }
+    if (summary) fields.summary = summary;
+    if (description) fields.description = description;
+    if (priority) fields.priority = { name: priority };
+
+    if (Object.keys(fields).length > 0) {
+      try {
+        await this.makeJiraRequest(`/issue/${issueKey}`, {
+          method: 'PUT',
+          data: { fields }
+        });
+        updateResult += `✓ Updated fields: ${Object.keys(fields).join(', ')}\n`;
+      } catch (error) {
+        updateResult += `✗ Failed to update fields: ${error instanceof Error ? error.message : String(error)}\n`;
+      }
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Update results for ${issueKey}:\n\n${updateResult || "No updates requested"}`,
         },
       ],
     };
