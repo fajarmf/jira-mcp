@@ -1,12 +1,14 @@
 # Jira MCP Server
 
-A Model Context Protocol (MCP) server that integrates with Atlassian Jira to search issues, retrieve details, and access comments.
+A Model Context Protocol (MCP) server that integrates with Atlassian Jira to search issues, retrieve details, access comments, and update issues.
 
 ## Features
 
 - 🔍 **Search Issues**: Use JQL (Jira Query Language) to find issues
 - 📋 **Get Issue Details**: Retrieve complete issue information including acceptance criteria
 - 💬 **Access Comments**: Get all comments for any issue
+- ✏️ **Update Issues**: Change status, assignee, summary, description, and priority
+- 🔄 **Status Transitions**: View available status transitions and change issue status
 - 🔧 **Configurable**: Works with any Jira Cloud instance
 
 ## Installation
@@ -116,6 +118,57 @@ Get all comments for a specific issue.
 }
 ```
 
+### jira_get_transitions
+Get available status transitions for a specific issue.
+
+**Parameters:**
+- `issueKey` (required): The Jira issue key (e.g., "PROJECT-123")
+
+**Example:**
+```json
+{
+  "tool": "jira_get_transitions",
+  "arguments": {
+    "issueKey": "PROJECT-123"
+  }
+}
+```
+
+### jira_update_issue
+Update a Jira issue's status, assignee, summary, description, or priority.
+
+**Parameters:**
+- `issueKey` (required): The Jira issue key (e.g., "PROJECT-123")
+- `transition` (optional): Status transition name or ID
+- `assignee` (optional): Assignee email address or account ID
+- `summary` (optional): Updated issue summary
+- `description` (optional): Updated issue description
+- `priority` (optional): Priority name (e.g., "High", "Medium", "Low")
+
+**Example - Change status:**
+```json
+{
+  "tool": "jira_update_issue",
+  "arguments": {
+    "issueKey": "PROJECT-123",
+    "transition": "In Review"
+  }
+}
+```
+
+**Example - Update multiple fields:**
+```json
+{
+  "tool": "jira_update_issue",
+  "arguments": {
+    "issueKey": "PROJECT-123",
+    "transition": "Done",
+    "assignee": "developer@example.com",
+    "priority": "Low"
+  }
+}
+```
+
 ## JQL Examples
 
 Here are some useful JQL queries you can use with the search tool:
@@ -191,6 +244,8 @@ Your Jira API token needs the following permissions:
 - Read access to projects and issues
 - Read access to comments
 - Browse projects permission
+- Write access to issues (for updating status, assignee, etc.)
+- Transition issues permission
 
 ## Troubleshooting
 
