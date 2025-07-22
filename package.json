@@ -1,0 +1,37 @@
+{
+  "name": "jira-mcp",
+  "version": "1.0.0",
+  "description": "Model Context Protocol server for Atlassian Jira integration - search issues, get details, and access comments from your Jira workspace",
+  "main": "build/index.js",
+  "bin": {
+    "jira-mcp": "./build/index.js"
+  },
+  "scripts": {
+    "build": "npx tsc",
+    "start": "node build/index.js",
+    "test": "echo \"No tests specified yet\" && exit 0"
+  },
+  "keywords": [
+    "mcp",
+    "jira",
+    "atlassian",
+    "model-context-protocol",
+    "ai",
+    "issue-tracking",
+    "project-management"
+  ],
+  "author": "Fajar Firdaus",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fajarmf/jira-mcp.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
