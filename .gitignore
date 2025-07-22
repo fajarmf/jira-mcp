@@ -38,6 +38,11 @@ temp/
 config/local.json
 secrets.json
 
+# Test files that might contain sensitive data
+test-*.js
+debug-*.js
+*-test.js
+
 # OS files
 Thumbs.db
 

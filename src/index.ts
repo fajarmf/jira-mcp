@@ -134,7 +134,8 @@ class JiraServer {
 
   private async getIssue(issueKey: string) {
     const data = await this.makeJiraRequest(`/issue/${issueKey}`, {
-      expand: "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+      fields: "summary,status,assignee,priority,created,updated,description,issuetype,reporter,parent",
+      expand: "renderedFields",
     });
 
     // Extract acceptance criteria from description or custom field
