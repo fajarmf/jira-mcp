@@ -1,12 +1,13 @@
 # Jira MCP Server
 
-A Model Context Protocol (MCP) server that integrates with Atlassian Jira to search issues, retrieve details, access comments, and update issues.
+A Model Context Protocol (MCP) server that integrates with Atlassian Jira to search issues, retrieve details, access comments, create new issues, and update issues.
 
 ## Features
 
 - 🔍 **Search Issues**: Use JQL (Jira Query Language) to find issues
 - 📋 **Get Issue Details**: Retrieve complete issue information including acceptance criteria
 - 💬 **Access Comments**: Get all comments for any issue
+- ➕ **Create Issues**: Create new issues with custom fields, labels, and assignments
 - ✏️ **Update Issues**: Change status, assignee, summary, description, and priority
 - 🔄 **Status Transitions**: View available status transitions and change issue status
 - 🔧 **Configurable**: Works with any Jira Cloud instance
@@ -134,6 +135,48 @@ Get available status transitions for a specific issue.
 }
 ```
 
+### jira_create_issue
+Create a new Jira issue.
+
+**Parameters:**
+- `projectKey` (required): The project key where the issue will be created (e.g., "PROJ")
+- `summary` (required): Issue summary/title
+- `description` (optional): Issue description
+- `issueType` (optional): Issue type (e.g., "Bug", "Story", "Task") - defaults to "Task"
+- `priority` (optional): Priority name (e.g., "High", "Medium", "Low")
+- `assignee` (optional): Assignee email address or account ID
+- `labels` (optional): Array of labels to add to the issue
+
+**Example - Basic issue:**
+```json
+{
+  "tool": "jira_create_issue",
+  "arguments": {
+    "projectKey": "PROJ",
+    "summary": "Fix login bug",
+    "description": "Users cannot login when using special characters in password",
+    "issueType": "Bug",
+    "priority": "High"
+  }
+}
+```
+
+**Example - Full featured issue:**
+```json
+{
+  "tool": "jira_create_issue",
+  "arguments": {
+    "projectKey": "PROJ",
+    "summary": "Implement user dashboard",
+    "description": "Create a comprehensive user dashboard with analytics and quick actions",
+    "issueType": "Story",
+    "priority": "Medium",
+    "assignee": "developer@example.com",
+    "labels": ["frontend", "dashboard", "user-experience"]
+  }
+}
+```
+
 ### jira_update_issue
 Update a Jira issue's status, assignee, summary, description, or priority.
 
@@ -244,6 +287,7 @@ Your Jira API token needs the following permissions:
 - Read access to projects and issues
 - Read access to comments
 - Browse projects permission
+- Create issues permission (for creating new issues)
 - Write access to issues (for updating status, assignee, etc.)
 - Transition issues permission
 

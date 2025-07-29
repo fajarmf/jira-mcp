@@ -132,6 +132,46 @@ class JiraServer {
               required: ["issueKey"],
             },
           },
+          {
+            name: "jira_create_issue",
+            description: "Create a new Jira issue",
+            inputSchema: {
+              type: "object",
+              properties: {
+                projectKey: {
+                  type: "string",
+                  description: "The project key where the issue will be created (e.g., PROJ)",
+                },
+                summary: {
+                  type: "string",
+                  description: "Issue summary/title",
+                },
+                description: {
+                  type: "string",
+                  description: "Issue description (optional)",
+                },
+                issueType: {
+                  type: "string",
+                  description: "Issue type (e.g., Bug, Story, Task) - defaults to Task",
+                  default: "Task",
+                },
+                priority: {
+                  type: "string",
+                  description: "Priority name (e.g., High, Medium, Low) (optional)",
+                },
+                assignee: {
+                  type: "string",
+                  description: "Assignee email or account ID (optional)",
+                },
+                labels: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Array of labels to add to the issue (optional)",
+                },
+              },
+              required: ["projectKey", "summary"],
+            },
+          },
         ],
       };
     });
@@ -155,6 +195,9 @@ class JiraServer {
           
           case "jira_update_issue":
             return await this.updateIssue(args);
+          
+          case "jira_create_issue":
+            return await this.createIssue(args);
           
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -403,6 +446,74 @@ ${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) =
         },
       ],
     };
+  }
+
+  private async createIssue(args: any) {
+    const { projectKey, summary, description, issueType = "Task", priority, assignee, labels } = args;
+
+    const fields: any = {
+      project: { key: projectKey },
+      summary,
+      issuetype: { name: issueType },
+    };
+
+    if (description) fields.description = description;
+    if (priority) fields.priority = { name: priority };
+    if (assignee) fields.assignee = { emailAddress: assignee };
+    if (labels && labels.length > 0) fields.labels = labels.map((label: string) => ({ name: label }));
+
+    try {
+      const data = await this.makeJiraRequest("/issue", {
+        method: 'POST',
+        data: { fields }
+      });
+
+      const issueKey = data.key;
+      const issueUrl = `${this.config.baseUrl}/browse/${issueKey}`;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✓ Successfully created issue: **${issueKey}**
+
+**Summary:** ${summary}
+**Project:** ${projectKey}
+**Issue Type:** ${issueType}
+${priority ? `**Priority:** ${priority}` : ''}
+${assignee ? `**Assignee:** ${assignee}` : ''}
+${labels && labels.length > 0 ? `**Labels:** ${labels.join(', ')}` : ''}
+
+**URL:** ${issueUrl}
+
+${description ? `**Description:**\n${description}` : ''}`,
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Try to provide more helpful error messages
+      let helpfulError = errorMessage;
+      if (errorMessage.includes('project') || errorMessage.includes('Project')) {
+        helpfulError += `\n\nTip: Make sure the project key "${projectKey}" exists and you have permission to create issues in it.`;
+      }
+      if (errorMessage.includes('issuetype') || errorMessage.includes('Issue Type')) {
+        helpfulError += `\n\nTip: Make sure the issue type "${issueType}" is valid for this project. Common types: Task, Bug, Story, Epic.`;
+      }
+      if (errorMessage.includes('priority')) {
+        helpfulError += `\n\nTip: Make sure the priority "${priority}" is valid. Common priorities: Highest, High, Medium, Low, Lowest.`;
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✗ Failed to create issue: ${helpfulError}`,
+          },
+        ],
+      };
+    }
   }
 
   async run() {
