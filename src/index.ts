@@ -38,6 +38,14 @@ class JiraServer {
       return {
         tools: [
           {
+            name: "jira_get_fields",
+            description: "Get all available fields in Jira including custom fields",
+            inputSchema: {
+              type: "object",
+              properties: {},
+            },
+          },
+          {
             name: "jira_get_issue",
             description: "Get a specific Jira issue by key (e.g., PROJECT-123)",
             inputSchema: {
@@ -168,6 +176,15 @@ class JiraServer {
                   items: { type: "string" },
                   description: "Array of labels to add to the issue (optional)",
                 },
+                parentKey: {
+                  type: "string",
+                  description: "Parent epic key to link this issue to (e.g., PROJ-123) (optional)",
+                },
+                customFields: {
+                  type: "object",
+                  description: "Custom fields as key-value pairs where key is the field ID (e.g., customfield_10001) (optional)",
+                  additionalProperties: true,
+                },
               },
               required: ["projectKey", "summary"],
             },
@@ -181,6 +198,9 @@ class JiraServer {
 
       try {
         switch (name) {
+          case "jira_get_fields":
+            return await this.getFields();
+            
           case "jira_get_issue":
             return await this.getIssue(args?.issueKey as string);
           
@@ -239,7 +259,7 @@ class JiraServer {
   private async getIssue(issueKey: string) {
     const data = await this.makeJiraRequest(`/issue/${issueKey}`, {
       params: {
-        fields: "summary,status,assignee,priority,created,updated,description,issuetype,reporter,parent",
+        fields: "*all",  // Get all fields including custom fields
         expand: "renderedFields",
       }
     });
@@ -247,6 +267,14 @@ class JiraServer {
     // Extract acceptance criteria from description or custom field
     const description = data.renderedFields?.description || data.fields?.description;
     const acceptanceCriteria = this.extractAcceptanceCriteria(description);
+    
+    // Extract custom fields
+    const customFields: any = {};
+    Object.keys(data.fields).forEach(key => {
+      if (key.startsWith('customfield_') && data.fields[key] !== null) {
+        customFields[key] = data.fields[key];
+      }
+    });
 
     const result = {
       key: data.key,
@@ -259,6 +287,7 @@ class JiraServer {
       updated: data.fields.updated,
       description: description,
       acceptanceCriteria: acceptanceCriteria,
+      customFields: customFields,
       url: `${this.config.baseUrl}/browse/${data.key}`,
     };
 
@@ -278,6 +307,11 @@ ${result.description}
 
 **Acceptance Criteria:**
 ${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) => `${i + 1}. ${ac}`).join('\n') : 'None found'}
+
+**Custom Fields:**
+${Object.keys(result.customFields).length > 0 ? 
+  Object.keys(result.customFields).map(key => `- ${key}: ${JSON.stringify(result.customFields[key])}`).join('\n') : 
+  'None found'}
 
 **Created:** ${new Date(result.created).toLocaleDateString()}
 **Updated:** ${new Date(result.updated).toLocaleDateString()}`,
@@ -313,6 +347,79 @@ ${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) =
     }
 
     return criteria;
+  }
+
+  private convertToADF(text: string): any {
+    // Convert plain text to Atlassian Document Format
+    const paragraphs = text.split('\n\n').filter(p => p.trim());
+    
+    return {
+      type: 'doc',
+      version: 1,
+      content: paragraphs.map(paragraph => {
+        const lines = paragraph.split('\n');
+        const content: any[] = [];
+        
+        lines.forEach((line, index) => {
+          if (line.trim()) {
+            content.push({
+              type: 'text',
+              text: line
+            });
+          }
+          if (index < lines.length - 1) {
+            content.push({
+              type: 'hardBreak'
+            });
+          }
+        });
+        
+        return {
+          type: 'paragraph',
+          content: content.length > 0 ? content : [{ type: 'text', text: ' ' }]
+        };
+      })
+    };
+  }
+
+  private async getFields() {
+    const data = await this.makeJiraRequest("/field");
+    
+    const customFields = data.filter((field: any) => field.custom);
+    
+    // Filter for acceptance criteria related fields
+    const acFields = customFields.filter((field: any) => 
+      field.name && (
+        field.name.toLowerCase().includes('acceptance') ||
+        field.name.toLowerCase().includes('criteria') ||
+        field.name.toLowerCase().includes('explain') ||
+        field.name.toLowerCase().includes('happy') ||
+        field.name.toLowerCase().includes('changed') ||
+        field.name.toLowerCase().includes('code')
+      )
+    );
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: `**Acceptance Criteria Related Fields (${acFields.length}):**
+${acFields.map((field: any) => `- ${field.name} (${field.id})`).join('\n')}
+
+**All Custom Fields (${customFields.length}):**
+${customFields.slice(0, 20).map((field: any) => `- ${field.name} (${field.id})`).join('\n')}
+${customFields.length > 20 ? `\n... and ${customFields.length - 20} more custom fields` : ''}
+
+**Usage Example:**
+\`\`\`
+customFields: {
+  "customfield_10001": "Simple explanation of the change",
+  "customfield_10002": "Code usage instructions"
+}
+\`\`\``
+        },
+      ],
+    };
   }
 
   private async searchIssues(jql: string, maxResults: number) {
@@ -423,7 +530,7 @@ ${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) =
       fields.assignee = { emailAddress: assignee };
     }
     if (summary) fields.summary = summary;
-    if (description) fields.description = description;
+    if (description) fields.description = this.convertToADF(description);
     if (priority) fields.priority = { name: priority };
 
     if (Object.keys(fields).length > 0) {
@@ -449,7 +556,7 @@ ${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) =
   }
 
   private async createIssue(args: any) {
-    const { projectKey, summary, description, issueType = "Task", priority, assignee, labels } = args;
+    const { projectKey, summary, description, issueType = "Task", priority, assignee, labels, parentKey, customFields } = args;
 
     const fields: any = {
       project: { key: projectKey },
@@ -457,10 +564,26 @@ ${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) =
       issuetype: { name: issueType },
     };
 
-    if (description) fields.description = description;
+    // Convert plain text description to ADF format if provided
+    if (description) {
+      fields.description = this.convertToADF(description);
+    }
+    
     if (priority) fields.priority = { name: priority };
     if (assignee) fields.assignee = { emailAddress: assignee };
     if (labels && labels.length > 0) fields.labels = labels.map((label: string) => ({ name: label }));
+    
+    // Add parent link for epics
+    if (parentKey) {
+      fields.parent = { key: parentKey };
+    }
+    
+    // Add custom fields
+    if (customFields) {
+      Object.keys(customFields).forEach(fieldId => {
+        fields[fieldId] = customFields[fieldId];
+      });
+    }
 
     try {
       const data = await this.makeJiraRequest("/issue", {
@@ -483,6 +606,7 @@ ${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) =
 ${priority ? `**Priority:** ${priority}` : ''}
 ${assignee ? `**Assignee:** ${assignee}` : ''}
 ${labels && labels.length > 0 ? `**Labels:** ${labels.join(', ')}` : ''}
+${parentKey ? `**Parent Epic:** ${parentKey}` : ''}
 
 **URL:** ${issueUrl}
 
@@ -490,11 +614,12 @@ ${description ? `**Description:**\n${description}` : ''}`,
           },
         ],
       };
-    } catch (error) {
+    } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorDetails = error?.response?.data ? JSON.stringify(error.response.data) : '';
       
       // Try to provide more helpful error messages
-      let helpfulError = errorMessage;
+      let helpfulError = errorMessage + (errorDetails ? `\nDetails: ${errorDetails}` : '');
       if (errorMessage.includes('project') || errorMessage.includes('Project')) {
         helpfulError += `\n\nTip: Make sure the project key "${projectKey}" exists and you have permission to create issues in it.`;
       }
