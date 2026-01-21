@@ -423,7 +423,7 @@ customFields: {
   }
 
   private async searchIssues(jql: string, maxResults: number) {
-    const data = await this.makeJiraRequest("/search", {
+    const data = await this.makeJiraRequest("/search/jql", {
       params: {
         jql,
         maxResults,
