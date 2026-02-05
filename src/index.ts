@@ -30,6 +30,11 @@ class JiraServer {
       apiToken: process.env.JIRA_API_TOKEN || "",
     };
 
+    // Debug: Log config (mask token)
+    console.error(`[DEBUG] JIRA_BASE_URL: ${this.config.baseUrl}`);
+    console.error(`[DEBUG] JIRA_EMAIL: ${this.config.email}`);
+    console.error(`[DEBUG] JIRA_API_TOKEN length: ${this.config.apiToken?.length || 0}`);
+
     this.setupToolHandlers();
   }
 
@@ -189,6 +194,24 @@ class JiraServer {
               required: ["projectKey", "summary"],
             },
           },
+          {
+            name: "jira_add_comment",
+            description: "Add a comment to a Jira issue",
+            inputSchema: {
+              type: "object",
+              properties: {
+                issueKey: {
+                  type: "string",
+                  description: "The Jira issue key (e.g., PROJECT-123)",
+                },
+                body: {
+                  type: "string",
+                  description: "Comment body in plain text",
+                },
+              },
+              required: ["issueKey", "body"],
+            },
+          },
         ],
       };
     });
@@ -218,7 +241,10 @@ class JiraServer {
           
           case "jira_create_issue":
             return await this.createIssue(args);
-          
+
+          case "jira_add_comment":
+            return await this.addComment(args?.issueKey as string, args?.body as string);
+
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -639,6 +665,24 @@ ${description ? `**Description:**\n${description}` : ''}`,
         ],
       };
     }
+  }
+
+  private async addComment(issueKey: string, body: string) {
+    const data = await this.makeJiraRequest(`/issue/${issueKey}/comment`, {
+      method: 'POST',
+      data: {
+        body: this.convertToADF(body),
+      },
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `✓ Comment added to ${issueKey} (ID: ${data.id})`,
+        },
+      ],
+    };
   }
 
   async run() {
