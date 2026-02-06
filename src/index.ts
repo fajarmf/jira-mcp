@@ -135,7 +135,7 @@ class JiraServer {
                 },
                 description: {
                   type: "string",
-                  description: "Updated description (optional)",
+                  description: "Updated description in markdown format (optional). Supports: ```code blocks```, # headings, - bullet lists, 1. numbered lists, **bold**, `inline code`",
                 },
                 priority: {
                   type: "string",
@@ -161,7 +161,7 @@ class JiraServer {
                 },
                 description: {
                   type: "string",
-                  description: "Issue description (optional)",
+                  description: "Issue description in markdown format (optional). Supports: ```code blocks```, # headings, - bullet lists, 1. numbered lists, **bold**, `inline code`",
                 },
                 issueType: {
                   type: "string",
@@ -376,36 +376,145 @@ ${Object.keys(result.customFields).length > 0 ?
   }
 
   private convertToADF(text: string): any {
-    // Convert plain text to Atlassian Document Format
-    const paragraphs = text.split('\n\n').filter(p => p.trim());
-    
+    // Convert markdown-formatted text to Atlassian Document Format
+    const content: any[] = [];
+    const lines = text.split('\n');
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // Code block: ```language ... ```
+      if (line.trim().startsWith('```')) {
+        const language = line.trim().slice(3).trim() || undefined;
+        const codeLines: string[] = [];
+        i++;
+        while (i < lines.length && !lines[i].trim().startsWith('```')) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        i++; // skip closing ```
+        content.push({
+          type: 'codeBlock',
+          ...(language && { attrs: { language } }),
+          content: codeLines.length > 0
+            ? [{ type: 'text', text: codeLines.join('\n') }]
+            : [],
+        });
+        continue;
+      }
+
+      // Heading: # ## ### etc
+      const headingMatch = line.match(/^(#{1,6})\s+(.+)/);
+      if (headingMatch) {
+        content.push({
+          type: 'heading',
+          attrs: { level: headingMatch[1].length },
+          content: this.parseInlineMarks(headingMatch[2]),
+        });
+        i++;
+        continue;
+      }
+
+      // Bullet list: - or *
+      if (line.match(/^\s*[-*]\s+/)) {
+        const listItems: any[] = [];
+        while (i < lines.length && lines[i].match(/^\s*[-*]\s+/)) {
+          const itemText = lines[i].replace(/^\s*[-*]\s+/, '');
+          listItems.push({
+            type: 'listItem',
+            content: [{ type: 'paragraph', content: this.parseInlineMarks(itemText) }],
+          });
+          i++;
+        }
+        content.push({ type: 'bulletList', content: listItems });
+        continue;
+      }
+
+      // Ordered list: 1. 2. etc
+      if (line.match(/^\s*\d+\.\s+/)) {
+        const listItems: any[] = [];
+        while (i < lines.length && lines[i].match(/^\s*\d+\.\s+/)) {
+          const itemText = lines[i].replace(/^\s*\d+\.\s+/, '');
+          listItems.push({
+            type: 'listItem',
+            content: [{ type: 'paragraph', content: this.parseInlineMarks(itemText) }],
+          });
+          i++;
+        }
+        content.push({ type: 'orderedList', attrs: { order: 1 }, content: listItems });
+        continue;
+      }
+
+      // Empty line - skip
+      if (line.trim() === '') {
+        i++;
+        continue;
+      }
+
+      // Regular paragraph - collect consecutive non-special lines
+      const paraLines: string[] = [];
+      while (
+        i < lines.length &&
+        lines[i].trim() !== '' &&
+        !lines[i].trim().startsWith('```') &&
+        !lines[i].match(/^#{1,6}\s+/) &&
+        !lines[i].match(/^\s*[-*]\s+/) &&
+        !lines[i].match(/^\s*\d+\.\s+/)
+      ) {
+        paraLines.push(lines[i]);
+        i++;
+      }
+
+      const paraContent: any[] = [];
+      paraLines.forEach((pLine, idx) => {
+        paraContent.push(...this.parseInlineMarks(pLine));
+        if (idx < paraLines.length - 1) {
+          paraContent.push({ type: 'hardBreak' });
+        }
+      });
+
+      if (paraContent.length > 0) {
+        content.push({ type: 'paragraph', content: paraContent });
+      }
+    }
+
     return {
       type: 'doc',
       version: 1,
-      content: paragraphs.map(paragraph => {
-        const lines = paragraph.split('\n');
-        const content: any[] = [];
-        
-        lines.forEach((line, index) => {
-          if (line.trim()) {
-            content.push({
-              type: 'text',
-              text: line
-            });
-          }
-          if (index < lines.length - 1) {
-            content.push({
-              type: 'hardBreak'
-            });
-          }
-        });
-        
-        return {
-          type: 'paragraph',
-          content: content.length > 0 ? content : [{ type: 'text', text: ' ' }]
-        };
-      })
+      content: content.length > 0
+        ? content
+        : [{ type: 'paragraph', content: [{ type: 'text', text: ' ' }] }],
     };
+  }
+
+  private parseInlineMarks(text: string): any[] {
+    const result: any[] = [];
+    const regex = /(\*\*(.+?)\*\*|`([^`]+?)`)/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        result.push({ type: 'text', text: text.slice(lastIndex, match.index) });
+      }
+      if (match[2]) {
+        result.push({ type: 'text', text: match[2], marks: [{ type: 'strong' }] });
+      } else if (match[3]) {
+        result.push({ type: 'text', text: match[3], marks: [{ type: 'code' }] });
+      }
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < text.length) {
+      result.push({ type: 'text', text: text.slice(lastIndex) });
+    }
+
+    if (result.length === 0 && text) {
+      result.push({ type: 'text', text });
+    }
+
+    return result;
   }
 
   private async getFields() {
