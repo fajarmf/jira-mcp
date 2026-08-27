@@ -263,21 +263,21 @@ class JiraServer {
           },
           {
             name: "jira_link_issues",
-            description: "Create a link between two Jira issues (e.g., blocks, is blocked by, relates to)",
+            description: "Create a link between two Jira issues. Direction: the inward issue performs the action on the outward issue — for 'Blocks', inwardIssueKey BLOCKS outwardIssueKey. To make A block B, pass inwardIssueKey=A, outwardIssueKey=B. The result message reports the direction Jira actually stored.",
             inputSchema: {
               type: "object",
               properties: {
                 linkType: {
                   type: "string",
-                  description: "Link type name (e.g., 'Blocks', 'Cloners', 'Duplicate', 'Relates'). The inward issue 'is blocked by' / outward issue 'blocks'.",
+                  description: "Link type name (e.g., 'Blocks', 'Cloners', 'Duplicate', 'Relates').",
                 },
                 inwardIssueKey: {
                   type: "string",
-                  description: "The issue key for the inward side of the link (e.g., the issue that 'is blocked by')",
+                  description: "The issue that performs the action. For 'Blocks': the BLOCKER (the issue that blocks the other).",
                 },
                 outwardIssueKey: {
                   type: "string",
-                  description: "The issue key for the outward side of the link (e.g., the issue that 'blocks')",
+                  description: "The issue the action is performed on. For 'Blocks': the issue that IS BLOCKED.",
                 },
               },
               required: ["linkType", "inwardIssueKey", "outwardIssueKey"],
@@ -1104,11 +1104,32 @@ ${description ? `**Description:**\n${description}` : ''}`,
         }
       });
 
+      // POST /issueLink returns no direction info, and hand-written confirmations
+      // have reported the wrong direction before — read back what Jira stored.
+      let confirmation: string;
+      try {
+        const data = await this.makeJiraRequest(`/issue/${inwardIssueKey}?fields=issuelinks`);
+        const links = data.fields?.issuelinks || [];
+        const stored = links.find((link: any) =>
+          link.type?.name === linkType &&
+          (link.outwardIssue?.key === outwardIssueKey || link.inwardIssue?.key === outwardIssueKey)
+        );
+        if (stored?.outwardIssue) {
+          confirmation = `✓ Link created and verified: ${inwardIssueKey} ${stored.type?.outward || ''} ${outwardIssueKey} (type: ${linkType})`;
+        } else if (stored?.inwardIssue) {
+          confirmation = `✓ Link created and verified: ${inwardIssueKey} ${stored.type?.inward || ''} ${outwardIssueKey} (type: ${linkType})`;
+        } else {
+          confirmation = `✓ Link created (type: ${linkType}), but it did not appear in the readback of ${inwardIssueKey} — verify the stored direction with jira_get_issue_links.`;
+        }
+      } catch {
+        confirmation = `✓ Link created (type: ${linkType}), but the readback failed — verify the stored direction with jira_get_issue_links.`;
+      }
+
       return {
         content: [
           {
             type: "text",
-            text: `✓ Linked ${outwardIssueKey} blocks ${inwardIssueKey}  (type: ${linkType})`,
+            text: confirmation,
           },
         ],
       };
