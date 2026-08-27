@@ -206,6 +206,10 @@ class JiraServer {
                   type: "string",
                   description: "Parent epic key to link this issue to (e.g., PROJ-123) (optional)",
                 },
+                acceptanceCriteria: {
+                  type: "string",
+                  description: "Acceptance criteria in markdown format (optional). Will be converted to ADF and stored in the AC field.",
+                },
                 customFields: {
                   type: "object",
                   description: "Custom fields as key-value pairs where key is the field ID (e.g., customfield_10001) (optional)",
@@ -370,14 +374,15 @@ class JiraServer {
       }
     });
 
-    // Extract acceptance criteria from description or custom field
     const description = data.renderedFields?.description || data.fields?.description;
-    const acceptanceCriteria = this.extractAcceptanceCriteria(description);
-    
-    // Extract custom fields
+    // AC lives in its own field (customfield_11927) — never scrape it out of the description
+    const acField = data.fields?.customfield_11927;
+    const acceptanceCriteria = acField ? this.adfToText(acField) : "";
+
+    // Extract custom fields (AC is rendered separately above)
     const customFields: any = {};
     Object.keys(data.fields).forEach(key => {
-      if (key.startsWith('customfield_') && data.fields[key] !== null) {
+      if (key.startsWith('customfield_') && key !== 'customfield_11927' && data.fields[key] !== null) {
         customFields[key] = data.fields[key];
       }
     });
@@ -412,7 +417,7 @@ class JiraServer {
 ${result.description}
 
 **Acceptance Criteria:**
-${result.acceptanceCriteria.length > 0 ? result.acceptanceCriteria.map((ac, i) => `${i + 1}. ${ac}`).join('\n') : 'None found'}
+${result.acceptanceCriteria ? result.acceptanceCriteria : 'None found'}
 
 **Custom Fields:**
 ${Object.keys(result.customFields).length > 0 ? 
@@ -424,35 +429,6 @@ ${Object.keys(result.customFields).length > 0 ?
         },
       ],
     };
-  }
-
-  private extractAcceptanceCriteria(description: string): string[] {
-    if (!description) return [];
-    
-    // Look for common AC patterns
-    const patterns = [
-      /acceptance criteria:?\s*(.*?)(?=\n\n|\n[A-Z]|$)/gsi,
-      /ac:?\s*(.*?)(?=\n\n|\n[A-Z]|$)/gsi,
-      /given.*when.*then.*/gsi,
-      /- \[[ x]\] .*/g,
-      /\* .*/g,
-    ];
-
-    const criteria: string[] = [];
-    
-    for (const pattern of patterns) {
-      const matches = description.match(pattern);
-      if (matches) {
-        matches.forEach(match => {
-          const cleaned = match.replace(/acceptance criteria:?/i, '').replace(/ac:?/i, '').trim();
-          if (cleaned && !criteria.includes(cleaned)) {
-            criteria.push(cleaned);
-          }
-        });
-      }
-    }
-
-    return criteria;
   }
 
   private convertToADF(text: string): any {
@@ -947,7 +923,7 @@ customFields: {
   }
 
   private async createIssue(args: any) {
-    const { projectKey, summary, description, issueType = "Task", priority, assignee, labels, parentKey, customFields } = args;
+    const { projectKey, summary, description, issueType = "Task", priority, assignee, labels, parentKey, acceptanceCriteria, customFields } = args;
 
     const fields: any = {
       project: { key: projectKey },
@@ -968,7 +944,9 @@ customFields: {
     if (parentKey) {
       fields.parent = { key: parentKey };
     }
-    
+
+    if (acceptanceCriteria) fields.customfield_11927 = this.convertToADF(acceptanceCriteria);
+
     // Add custom fields
     if (customFields) {
       Object.keys(customFields).forEach(fieldId => {
